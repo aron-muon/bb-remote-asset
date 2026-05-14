@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -36,8 +37,16 @@ type brokerTokenResponse struct {
 
 func newBrokerClient(baseURL string) *brokerClient {
 	return &brokerClient{
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 15 * 1e9}, // 15s
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Timeout: 15 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				IdleConnTimeout:     30 * time.Second,
+				DisableKeepAlives:   true,
+				TLSHandshakeTimeout: 10 * time.Second,
+			},
+		},
 	}
 }
 
