@@ -123,10 +123,12 @@ func (*FetcherConfiguration_Error) isFetcherConfiguration_Backend() {}
 func (*FetcherConfiguration_RemoteExecution) isFetcherConfiguration_Backend() {}
 
 type FetcherConfiguration_HttpFetcherConfiguration struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Client        *client.Configuration  `protobuf:"bytes,3,opt,name=client,proto3" json:"client,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                    protoimpl.MessageState                          `protogen:"open.v1"`
+	Client                   *client.Configuration                           `protobuf:"bytes,3,opt,name=client,proto3" json:"client,omitempty"`
+	BrokerUrl                string                                          `protobuf:"bytes,4,opt,name=broker_url,json=brokerUrl,proto3" json:"broker_url,omitempty"`
+	BrokerCredentialMappings []*FetcherConfiguration_BrokerCredentialMapping `protobuf:"bytes,5,rep,name=broker_credential_mappings,json=brokerCredentialMappings,proto3" json:"broker_credential_mappings,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *FetcherConfiguration_HttpFetcherConfiguration) Reset() {
@@ -166,6 +168,88 @@ func (x *FetcherConfiguration_HttpFetcherConfiguration) GetClient() *client.Conf
 	return nil
 }
 
+func (x *FetcherConfiguration_HttpFetcherConfiguration) GetBrokerUrl() string {
+	if x != nil {
+		return x.BrokerUrl
+	}
+	return ""
+}
+
+func (x *FetcherConfiguration_HttpFetcherConfiguration) GetBrokerCredentialMappings() []*FetcherConfiguration_BrokerCredentialMapping {
+	if x != nil {
+		return x.BrokerCredentialMappings
+	}
+	return nil
+}
+
+type FetcherConfiguration_BrokerCredentialMapping struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
+	Destination   string                 `protobuf:"bytes,2,opt,name=destination,proto3" json:"destination,omitempty"`
+	HeaderName    string                 `protobuf:"bytes,3,opt,name=header_name,json=headerName,proto3" json:"header_name,omitempty"`
+	HeaderPrefix  string                 `protobuf:"bytes,4,opt,name=header_prefix,json=headerPrefix,proto3" json:"header_prefix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetcherConfiguration_BrokerCredentialMapping) Reset() {
+	*x = FetcherConfiguration_BrokerCredentialMapping{}
+	mi := &file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetcherConfiguration_BrokerCredentialMapping) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetcherConfiguration_BrokerCredentialMapping) ProtoMessage() {}
+
+func (x *FetcherConfiguration_BrokerCredentialMapping) ProtoReflect() protoreflect.Message {
+	mi := &file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetcherConfiguration_BrokerCredentialMapping.ProtoReflect.Descriptor instead.
+func (*FetcherConfiguration_BrokerCredentialMapping) Descriptor() ([]byte, []int) {
+	return file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_rawDescGZIP(), []int{0, 1}
+}
+
+func (x *FetcherConfiguration_BrokerCredentialMapping) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *FetcherConfiguration_BrokerCredentialMapping) GetDestination() string {
+	if x != nil {
+		return x.Destination
+	}
+	return ""
+}
+
+func (x *FetcherConfiguration_BrokerCredentialMapping) GetHeaderName() string {
+	if x != nil {
+		return x.HeaderName
+	}
+	return ""
+}
+
+func (x *FetcherConfiguration_BrokerCredentialMapping) GetHeaderPrefix() string {
+	if x != nil {
+		return x.HeaderPrefix
+	}
+	return ""
+}
+
 type FetcherConfiguration_RemoteExecutionFetcherConfiguration struct {
 	state           protoimpl.MessageState    `protogen:"open.v1"`
 	ExecutionClient *grpc.ClientConfiguration `protobuf:"bytes,2,opt,name=execution_client,json=executionClient,proto3" json:"execution_client,omitempty"`
@@ -175,7 +259,7 @@ type FetcherConfiguration_RemoteExecutionFetcherConfiguration struct {
 
 func (x *FetcherConfiguration_RemoteExecutionFetcherConfiguration) Reset() {
 	*x = FetcherConfiguration_RemoteExecutionFetcherConfiguration{}
-	mi := &file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_msgTypes[2]
+	mi := &file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -187,7 +271,7 @@ func (x *FetcherConfiguration_RemoteExecutionFetcherConfiguration) String() stri
 func (*FetcherConfiguration_RemoteExecutionFetcherConfiguration) ProtoMessage() {}
 
 func (x *FetcherConfiguration_RemoteExecutionFetcherConfiguration) ProtoReflect() protoreflect.Message {
-	mi := &file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_msgTypes[2]
+	mi := &file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -200,7 +284,7 @@ func (x *FetcherConfiguration_RemoteExecutionFetcherConfiguration) ProtoReflect(
 
 // Deprecated: Use FetcherConfiguration_RemoteExecutionFetcherConfiguration.ProtoReflect.Descriptor instead.
 func (*FetcherConfiguration_RemoteExecutionFetcherConfiguration) Descriptor() ([]byte, []int) {
-	return file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_rawDescGZIP(), []int{0, 1}
+	return file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_rawDescGZIP(), []int{0, 2}
 }
 
 func (x *FetcherConfiguration_RemoteExecutionFetcherConfiguration) GetExecutionClient() *grpc.ClientConfiguration {
@@ -214,13 +298,22 @@ var File_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_
 
 const file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_rawDesc = "" +
 	"\n" +
-	"`github.com/buildbarn/bb-remote-asset/pkg/proto/configuration/bb_remote_asset/fetch/fetcher.proto\x12-buildbarn.configuration.bb_remote_asset.fetch\x1a\x17google/rpc/status.proto\x1aGgithub.com/buildbarn/bb-storage/pkg/proto/configuration/grpc/grpc.proto\x1aPgithub.com/buildbarn/bb-storage/pkg/proto/configuration/http/client/client.proto\"\xd8\x04\n" +
+	"`github.com/buildbarn/bb-remote-asset/pkg/proto/configuration/bb_remote_asset/fetch/fetcher.proto\x12-buildbarn.configuration.bb_remote_asset.fetch\x1a\x17google/rpc/status.proto\x1aGgithub.com/buildbarn/bb-storage/pkg/proto/configuration/grpc/grpc.proto\x1aPgithub.com/buildbarn/bb-storage/pkg/proto/configuration/http/client/client.proto\"\xac\a\n" +
 	"\x14FetcherConfiguration\x12r\n" +
 	"\x04http\x18\x02 \x01(\v2\\.buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.HttpFetcherConfigurationH\x00R\x04http\x12*\n" +
 	"\x05error\x18\x03 \x01(\v2\x12.google.rpc.StatusH\x00R\x05error\x12\x94\x01\n" +
-	"\x10remote_execution\x18\x04 \x01(\v2g.buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.RemoteExecutionFetcherConfigurationH\x00R\x0fremoteExecution\x1ar\n" +
+	"\x10remote_execution\x18\x04 \x01(\v2g.buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.RemoteExecutionFetcherConfigurationH\x00R\x0fremoteExecution\x1a\xad\x02\n" +
 	"\x18HttpFetcherConfiguration\x12J\n" +
-	"\x06client\x18\x03 \x01(\v22.buildbarn.configuration.http.client.ConfigurationR\x06clientJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03\x1a\x83\x01\n" +
+	"\x06client\x18\x03 \x01(\v22.buildbarn.configuration.http.client.ConfigurationR\x06client\x12\x1d\n" +
+	"\n" +
+	"broker_url\x18\x04 \x01(\tR\tbrokerUrl\x12\x99\x01\n" +
+	"\x1abroker_credential_mappings\x18\x05 \x03(\v2[.buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.BrokerCredentialMappingR\x18brokerCredentialMappingsJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03\x1a\x95\x01\n" +
+	"\x17BrokerCredentialMapping\x12\x12\n" +
+	"\x04host\x18\x01 \x01(\tR\x04host\x12 \n" +
+	"\vdestination\x18\x02 \x01(\tR\vdestination\x12\x1f\n" +
+	"\vheader_name\x18\x03 \x01(\tR\n" +
+	"headerName\x12#\n" +
+	"\rheader_prefix\x18\x04 \x01(\tR\fheaderPrefix\x1a\x83\x01\n" +
 	"#RemoteExecutionFetcherConfiguration\x12\\\n" +
 	"\x10execution_client\x18\x02 \x01(\v21.buildbarn.configuration.grpc.ClientConfigurationR\x0fexecutionClientB\t\n" +
 	"\abackendJ\x04\b\x01\x10\x02BTZRgithub.com/buildbarn/bb-remote-asset/pkg/proto/configuration/bb_remote_asset/fetchb\x06proto3"
@@ -237,26 +330,28 @@ func file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote
 	return file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_rawDescData
 }
 
-var file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_goTypes = []any{
 	(*FetcherConfiguration)(nil),                                     // 0: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration
 	(*FetcherConfiguration_HttpFetcherConfiguration)(nil),            // 1: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.HttpFetcherConfiguration
-	(*FetcherConfiguration_RemoteExecutionFetcherConfiguration)(nil), // 2: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.RemoteExecutionFetcherConfiguration
-	(*status.Status)(nil),                                            // 3: google.rpc.Status
-	(*client.Configuration)(nil),                                     // 4: buildbarn.configuration.http.client.Configuration
-	(*grpc.ClientConfiguration)(nil),                                 // 5: buildbarn.configuration.grpc.ClientConfiguration
+	(*FetcherConfiguration_BrokerCredentialMapping)(nil),             // 2: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.BrokerCredentialMapping
+	(*FetcherConfiguration_RemoteExecutionFetcherConfiguration)(nil), // 3: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.RemoteExecutionFetcherConfiguration
+	(*status.Status)(nil),                                            // 4: google.rpc.Status
+	(*client.Configuration)(nil),                                     // 5: buildbarn.configuration.http.client.Configuration
+	(*grpc.ClientConfiguration)(nil),                                 // 6: buildbarn.configuration.grpc.ClientConfiguration
 }
 var file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_depIdxs = []int32{
 	1, // 0: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.http:type_name -> buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.HttpFetcherConfiguration
-	3, // 1: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.error:type_name -> google.rpc.Status
-	2, // 2: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.remote_execution:type_name -> buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.RemoteExecutionFetcherConfiguration
-	4, // 3: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.HttpFetcherConfiguration.client:type_name -> buildbarn.configuration.http.client.Configuration
-	5, // 4: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.RemoteExecutionFetcherConfiguration.execution_client:type_name -> buildbarn.configuration.grpc.ClientConfiguration
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	4, // 1: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.error:type_name -> google.rpc.Status
+	3, // 2: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.remote_execution:type_name -> buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.RemoteExecutionFetcherConfiguration
+	5, // 3: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.HttpFetcherConfiguration.client:type_name -> buildbarn.configuration.http.client.Configuration
+	2, // 4: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.HttpFetcherConfiguration.broker_credential_mappings:type_name -> buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.BrokerCredentialMapping
+	6, // 5: buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.RemoteExecutionFetcherConfiguration.execution_client:type_name -> buildbarn.configuration.grpc.ClientConfiguration
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() {
@@ -277,7 +372,7 @@ func file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_rawDesc), len(file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
