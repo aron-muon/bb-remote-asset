@@ -87,7 +87,12 @@ func (hf *httpFetcher) FetchBlob(ctx context.Context, req *remoteasset.FetchBlob
 	}
 
 	if hf.broker != nil {
-		auth, err = hf.applyBrokerCredentials(ctx, req.Uris, auth)
+		// Extract the JWT upfront and use a background context for
+		// broker HTTP calls. The incoming gRPC context must not be
+		// passed to the broker's net/http client — doing so corrupts
+		// the gRPC transport state and causes EOF on the subsequent
+		// CAS Put through the same context.
+		auth, err = hf.applyBrokerCredentials(context.Background(), extractBearerToken(ctx), req.Uris, auth)
 		if err != nil {
 			log.Printf("Broker credential injection failed: %v", err)
 		}
@@ -248,8 +253,7 @@ func getChecksumSri(qualifiers []*remoteasset.Qualifier) (string, bb_digest.Func
 	return "", bb_digest.Function{}, nil
 }
 
-func (hf *httpFetcher) applyBrokerCredentials(ctx context.Context, uris []string, auth *AuthHeaders) (*AuthHeaders, error) {
-	clientJWT := extractBearerToken(ctx)
+func (hf *httpFetcher) applyBrokerCredentials(ctx context.Context, clientJWT string, uris []string, auth *AuthHeaders) (*AuthHeaders, error) {
 	if clientJWT == "" {
 		return auth, nil
 	}
