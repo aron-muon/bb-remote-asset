@@ -110,7 +110,8 @@ func (hf *httpFetcher) FetchBlob(ctx context.Context, req *remoteasset.FetchBlob
 
 	for _, uri := range req.Uris {
 		buffer, digest := hf.downloadBlob(ctx, uri, digestFunction, auth)
-		sizeBytes, err := buffer.GetSizeBytes()
+		var sizeBytes int64
+		sizeBytes, err = buffer.GetSizeBytes()
 		if err != nil {
 			log.Printf("Error downloading blob with URI %s: %v", uri, err)
 			continue
