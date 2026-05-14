@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/buildbarn/bb-remote-asset/internal/mock"
 	"github.com/buildbarn/bb-remote-asset/pkg/fetch"
+	pb "github.com/buildbarn/bb-remote-asset/pkg/proto/configuration/bb_remote_asset/fetch"
 	"github.com/buildbarn/bb-remote-asset/pkg/qualifier"
 	"github.com/buildbarn/bb-storage/pkg/digest"
 	"github.com/buildbarn/bb-storage/pkg/testutil"
@@ -21,6 +23,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
@@ -414,6 +417,156 @@ func TestHTTPFetcherFetchBlob(t *testing.T) {
 		require.Nil(t, err)
 		require.True(t, proto.Equal(response.BlobDigest, helloDigest.GetProto()))
 		require.Equal(t, response.Status.Code, int32(codes.OK))
+	})
+}
+
+func TestHTTPFetcherBrokerCredentialInjection(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	// Set up a fake broker that returns a known token.
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/delegate":
+			fmt.Fprintf(w, `{"nonce":"nonce-abc"}`)
+		case "/token":
+			fmt.Fprintf(w, `{"token":"art-tok-123","scheme":"bearer"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer broker.Close()
+
+	instance := util.Must(digest.NewInstanceName(InstanceName))
+	digestFunction, err := instance.GetDigestFunction(remoteexecution.DigestFunction_SHA256, 0)
+	require.NoError(t, err)
+	digestGenerator := digestFunction.NewGenerator(int64(len(TestData)))
+	digestGenerator.Write([]byte(TestData))
+	helloDigest := digestGenerator.Sum()
+
+	casBlobAccess := mock.NewMockBlobAccess(ctrl)
+	roundTripper := mock.NewMockRoundTripper(ctrl)
+
+	mappings := []*pb.FetcherConfiguration_BrokerCredentialMapping{
+		{
+			Host:        "artifactory.example.com",
+			Destination: "artifactory",
+		},
+	}
+	HTTPFetcher := fetch.NewHTTPFetcher(
+		&http.Client{Transport: roundTripper},
+		casBlobAccess,
+		broker.URL,
+		mappings,
+	)
+
+	t.Run("BrokerInjectsAuthHeader", func(t *testing.T) {
+		// Simulate an incoming gRPC context with a JWT (as the ALB would provide).
+		md := metadata.Pairs("authorization", "Bearer client-okta-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{"https://artifactory.example.com/some/package.tar.gz"},
+			Qualifiers:     []*remoteasset.Qualifier{},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		// The RoundTripper should receive a request with the broker-injected Authorization header.
+		roundTripper.EXPECT().RoundTrip(&headerMatcher{
+			headers: map[string]string{"Authorization": "Bearer art-tok-123"},
+		}).Return(&http.Response{
+			Status:        "200 OK",
+			StatusCode:    200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := HTTPFetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.True(t, proto.Equal(response.BlobDigest, helloDigest.GetProto()))
+	})
+
+	t.Run("NoBrokerForUnmappedHost", func(t *testing.T) {
+		md := metadata.Pairs("authorization", "Bearer client-okta-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{"https://github.com/some/repo/archive/abc.tar.gz"},
+			Qualifiers:     []*remoteasset.Qualifier{},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		// No broker auth — GitHub is not in the mappings. No Authorization header.
+		roundTripper.EXPECT().RoundTrip(gomock.Any()).Return(&http.Response{
+			Status:        "200 OK",
+			StatusCode:    200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := HTTPFetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+	})
+
+	t.Run("ClientAuthHeadersTakePrecedence", func(t *testing.T) {
+		md := metadata.Pairs("authorization", "Bearer client-okta-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		// Client provides explicit auth_headers qualifier — broker should NOT override.
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName: InstanceName,
+			Uris:         []string{"https://artifactory.example.com/some/package.tar.gz"},
+			Qualifiers: []*remoteasset.Qualifier{
+				{
+					Name:  "http_header:Authorization",
+					Value: "Bearer client-provided-token",
+				},
+			},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		roundTripper.EXPECT().RoundTrip(&headerMatcher{
+			headers: map[string]string{"Authorization": "Bearer client-provided-token"},
+		}).Return(&http.Response{
+			Status:        "200 OK",
+			StatusCode:    200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := HTTPFetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+	})
+
+	t.Run("NoJWTInContextPassesThrough", func(t *testing.T) {
+		// No gRPC metadata — broker can't delegate. Should pass through without auth.
+		ctx := context.Background()
+
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{"https://artifactory.example.com/some/package.tar.gz"},
+			Qualifiers:     []*remoteasset.Qualifier{},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		roundTripper.EXPECT().RoundTrip(gomock.Any()).Return(&http.Response{
+			Status:        "200 OK",
+			StatusCode:    200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := HTTPFetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
 	})
 }
 
