@@ -3,8 +3,8 @@ package fetch
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
