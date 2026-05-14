@@ -87,14 +87,24 @@ func (hf *httpFetcher) FetchBlob(ctx context.Context, req *remoteasset.FetchBlob
 	}
 
 	if hf.broker != nil {
-		// Extract the JWT upfront and use a background context for
-		// broker HTTP calls. The incoming gRPC context must not be
-		// passed to the broker's net/http client — doing so corrupts
-		// the gRPC transport state and causes EOF on the subsequent
-		// CAS Put through the same context.
-		auth, err = hf.applyBrokerCredentials(context.Background(), extractBearerToken(ctx), req.Uris, auth)
-		if err != nil {
-			log.Printf("Broker credential injection failed: %v", err)
+		clientJWT := extractBearerToken(ctx)
+		if clientJWT != "" {
+			// Run broker calls in a goroutine to completely isolate
+			// from the gRPC stream's goroutine context.
+			type brokerResult struct {
+				auth *AuthHeaders
+				err  error
+			}
+			ch := make(chan brokerResult, 1)
+			go func() {
+				a, e := hf.applyBrokerCredentials(context.Background(), clientJWT, req.Uris, auth)
+				ch <- brokerResult{a, e}
+			}()
+			result := <-ch
+			auth = result.auth
+			if result.err != nil {
+				log.Printf("Broker credential injection failed: %v", result.err)
+			}
 		}
 	}
 
