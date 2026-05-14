@@ -1,5 +1,6 @@
-load("@com_github_buildbarn_bb_storage//tools:container.bzl", "container_push_official", "multiarch_go_image")
+load("@com_github_buildbarn_bb_storage//tools:container.bzl", "multiarch_go_image")
 load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("//tools:container_fork.bzl", "container_push_fork")
 
 go_library(
     name = "bb_remote_asset_lib",
@@ -40,7 +41,7 @@ multiarch_go_image(
     binary = ":bb_remote_asset",
 )
 
-container_push_official(
+container_push_fork(
     name = "bb_remote_asset_container_push",
     component = "bb-remote-asset",
     image = ":bb_remote_asset_container",
