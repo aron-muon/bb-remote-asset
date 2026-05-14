@@ -110,10 +110,12 @@ func (hf *httpFetcher) FetchBlob(ctx context.Context, req *remoteasset.FetchBlob
 
 	for _, uri := range req.Uris {
 		buffer, digest := hf.downloadBlob(ctx, uri, digestFunction, auth)
-		if _, err = buffer.GetSizeBytes(); err != nil {
+		sizeBytes, err := buffer.GetSizeBytes()
+		if err != nil {
 			log.Printf("Error downloading blob with URI %s: %v", uri, err)
 			continue
 		}
+		log.Printf("Downloaded %d bytes for %s (digest: %s)", sizeBytes, uri, digest.GetHashString())
 
 		// Check the checksum.sri qualifier, if there's an expected Digest
 		if expectedDigest != "" {
@@ -123,9 +125,10 @@ func (hf *httpFetcher) FetchBlob(ctx context.Context, req *remoteasset.FetchBlob
 		}
 
 		if err = hf.contentAddressableStorage.Put(ctx, digest, buffer); err != nil {
-			log.Printf("Error downloading blob with URI %s: %v", uri, err)
+			log.Printf("CAS Put FAILED for %s (digest %s, %d bytes): %v", uri, digest.GetHashString(), sizeBytes, err)
 			return nil, util.StatusWrapWithCode(err, codes.Internal, "Failed to place blob into CAS")
 		}
+		log.Printf("CAS Put OK for %s (digest %s)", uri, digest.GetHashString())
 		return &remoteasset.FetchBlobResponse{
 			Status:     status.New(codes.OK, "Blob fetched successfully!").Proto(),
 			Uri:        uri,
