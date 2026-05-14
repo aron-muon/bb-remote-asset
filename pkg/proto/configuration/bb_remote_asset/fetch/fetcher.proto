@@ -48,6 +48,31 @@ message FetcherConfiguration {
 
     // Optional: Options to be used by the HTTP client.
     buildbarn.configuration.http.client.Configuration client = 3;
+
+    // When set, on cache-miss fetches to matching hosts where the
+    // client did not provide auth_headers qualifiers, extract the
+    // client's JWT from gRPC metadata, exchange it via
+    // bb-credential-broker for an upstream credential, and apply it
+    // to the outbound HTTP request.
+    string broker_url = 4;
+
+    // Host-to-destination mappings for broker credential injection.
+    repeated BrokerCredentialMapping broker_credential_mappings = 5;
+  }
+
+  message BrokerCredentialMapping {
+    // URL host to match (e.g. "artifactory.muonspace.com").
+    string host = 1;
+
+    // Broker destination name (e.g. "artifactory").
+    string destination = 2;
+
+    // HTTP header to set on the upstream request. Default:
+    // "Authorization".
+    string header_name = 3;
+
+    // Value prefix prepended to the token. Default: "Bearer ".
+    string header_prefix = 4;
   }
 
   message RemoteExecutionFetcherConfiguration {

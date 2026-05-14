@@ -3,10 +3,12 @@ package fetch
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"encoding/hex"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -19,6 +21,7 @@ import (
 
 	remoteasset "github.com/bazelbuild/remote-apis/build/bazel/remote/asset/v1"
 	remoteexecution "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
+	pb "github.com/buildbarn/bb-remote-asset/pkg/proto/configuration/bb_remote_asset/fetch"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -37,16 +40,30 @@ const (
 type httpFetcher struct {
 	httpClient                *http.Client
 	contentAddressableStorage blobstore.BlobAccess
+	broker                    *brokerClient
+	brokerMappings            map[string]*pb.FetcherConfiguration_BrokerCredentialMapping
 }
 
 // NewHTTPFetcher creates a remoteasset FetchServer compatible service for handling requests which involve downloading
 // assets over HTTP and storing them into a CAS.
 func NewHTTPFetcher(httpClient *http.Client,
 	contentAddressableStorage blobstore.BlobAccess,
+	brokerURL string,
+	mappings []*pb.FetcherConfiguration_BrokerCredentialMapping,
 ) Fetcher {
+	var broker *brokerClient
+	mappingsByHost := map[string]*pb.FetcherConfiguration_BrokerCredentialMapping{}
+	if brokerURL != "" {
+		broker = newBrokerClient(brokerURL)
+		for _, m := range mappings {
+			mappingsByHost[m.Host] = m
+		}
+	}
 	return &httpFetcher{
 		httpClient:                httpClient,
 		contentAddressableStorage: contentAddressableStorage,
+		broker:                    broker,
+		brokerMappings:            mappingsByHost,
 	}
 }
 
@@ -67,6 +84,13 @@ func (hf *httpFetcher) FetchBlob(ctx context.Context, req *remoteasset.FetchBlob
 	auth, err := getAuthHeaders(req.Uris, req.Qualifiers)
 	if err != nil {
 		return nil, err
+	}
+
+	if hf.broker != nil {
+		auth, err = hf.applyBrokerCredentials(ctx, req.Uris, auth)
+		if err != nil {
+			log.Printf("Broker credential injection failed: %v", err)
+		}
 	}
 
 	for _, uri := range req.Uris {
@@ -222,6 +246,53 @@ func getChecksumSri(qualifiers []*remoteasset.Qualifier) (string, bb_digest.Func
 	}
 
 	return "", bb_digest.Function{}, nil
+}
+
+func (hf *httpFetcher) applyBrokerCredentials(ctx context.Context, uris []string, auth *AuthHeaders) (*AuthHeaders, error) {
+	clientJWT := extractBearerToken(ctx)
+	if clientJWT == "" {
+		return auth, nil
+	}
+
+	for _, uri := range uris {
+		if auth != nil {
+			if headers, ok := (*auth)[uri]; ok && len(headers) > 0 {
+				continue
+			}
+		}
+
+		parsed, err := url.Parse(uri)
+		if err != nil {
+			continue
+		}
+		mapping, ok := hf.brokerMappings[parsed.Host]
+		if !ok {
+			continue
+		}
+
+		token, err := hf.broker.fetchCredential(ctx, clientJWT, mapping.Destination)
+		if err != nil {
+			return auth, fmt.Errorf("broker credential for %s: %w", parsed.Host, err)
+		}
+
+		headerName := mapping.HeaderName
+		if headerName == "" {
+			headerName = "Authorization"
+		}
+		headerPrefix := mapping.HeaderPrefix
+		if headerPrefix == "" {
+			headerPrefix = "Bearer "
+		}
+
+		if auth == nil {
+			a := AuthHeaders{}
+			auth = &a
+		}
+		auth.AddHeader(uri, headerName, headerPrefix+token)
+		log.Printf("Broker credential injected for host %s (destination %s)", parsed.Host, mapping.Destination)
+	}
+
+	return auth, nil
 }
 
 func getAuthHeaders(uris []string, qualifiers []*remoteasset.Qualifier) (*AuthHeaders, error) {

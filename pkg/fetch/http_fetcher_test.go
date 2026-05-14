@@ -140,7 +140,7 @@ func testHTTPFetcherFetchBlobSuccessWithHasher(t *testing.T, digestFunctionEnum 
 	}
 	casBlobAccess := mock.NewMockBlobAccess(ctrl)
 	roundTripper := mock.NewMockRoundTripper(ctrl)
-	HTTPFetcher := fetch.NewHTTPFetcher(&http.Client{Transport: roundTripper}, casBlobAccess)
+	HTTPFetcher := fetch.NewHTTPFetcher(&http.Client{Transport: roundTripper}, casBlobAccess, "", nil)
 
 	t.Run("Success"+helloDigest.GetDigestFunction().GetEnumValue().String(), func(t *testing.T) {
 		body := io.NopCloser(bytes.NewBuffer([]byte(TestData)))
@@ -198,7 +198,7 @@ func TestHTTPFetcherFetchBlob(t *testing.T) {
 	}
 	casBlobAccess := mock.NewMockBlobAccess(ctrl)
 	roundTripper := mock.NewMockRoundTripper(ctrl)
-	HTTPFetcher := fetch.NewHTTPFetcher(&http.Client{Transport: roundTripper}, casBlobAccess)
+	HTTPFetcher := fetch.NewHTTPFetcher(&http.Client{Transport: roundTripper}, casBlobAccess, "", nil)
 
 	t.Run("SuccessNoExpectedDigest", func(t *testing.T) {
 		body := io.NopCloser(bytes.NewBuffer([]byte(TestData)))
@@ -427,7 +427,7 @@ func TestHTTPFetcherFetchDirectory(t *testing.T) {
 	}
 	casBlobAccess := mock.NewMockBlobAccess(ctrl)
 	roundTripper := mock.NewMockRoundTripper(ctrl)
-	HTTPFetcher := fetch.NewHTTPFetcher(&http.Client{Transport: roundTripper}, casBlobAccess)
+	HTTPFetcher := fetch.NewHTTPFetcher(&http.Client{Transport: roundTripper}, casBlobAccess, "", nil)
 	_, err := HTTPFetcher.FetchDirectory(ctx, request)
 	require.NotNil(t, err)
 	require.Equal(t, status.Code(err), codes.PermissionDenied)
