@@ -9,6 +9,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -41,7 +43,7 @@ type httpFetcher struct {
 	httpClient                *http.Client
 	contentAddressableStorage blobstore.BlobAccess
 	broker                    *brokerClient
-	brokerMappings            map[string]*pb.FetcherConfiguration_BrokerCredentialMapping
+	brokerMappings            map[string][]*pb.FetcherConfiguration_BrokerCredentialMapping
 }
 
 // NewHTTPFetcher creates a remoteasset FetchServer compatible service for handling requests which involve downloading
@@ -52,11 +54,16 @@ func NewHTTPFetcher(httpClient *http.Client,
 	mappings []*pb.FetcherConfiguration_BrokerCredentialMapping,
 ) Fetcher {
 	var broker *brokerClient
-	mappingsByHost := map[string]*pb.FetcherConfiguration_BrokerCredentialMapping{}
+	mappingsByHost := map[string][]*pb.FetcherConfiguration_BrokerCredentialMapping{}
 	if brokerURL != "" {
 		broker = newBrokerClient(brokerURL)
 		for _, m := range mappings {
-			mappingsByHost[m.Host] = m
+			mappingsByHost[m.Host] = append(mappingsByHost[m.Host], m)
+		}
+		for _, slice := range mappingsByHost {
+			sort.SliceStable(slice, func(i, j int) bool {
+				return len(slice[i].PathPrefix) > len(slice[j].PathPrefix)
+			})
 		}
 	}
 	return &httpFetcher{
@@ -267,6 +274,20 @@ func getChecksumSri(qualifiers []*remoteasset.Qualifier) (string, bb_digest.Func
 	return "", bb_digest.Function{}, nil
 }
 
+func (hf *httpFetcher) selectMapping(parsed *url.URL) *pb.FetcherConfiguration_BrokerCredentialMapping {
+	candidates, ok := hf.brokerMappings[parsed.Host]
+	if !ok {
+		return nil
+	}
+	cleaned := path.Clean("/" + strings.TrimPrefix(parsed.Path, "/"))
+	for _, m := range candidates {
+		if m.PathPrefix == "" || strings.HasPrefix(cleaned, m.PathPrefix) {
+			return m
+		}
+	}
+	return nil
+}
+
 func (hf *httpFetcher) applyBrokerCredentials(ctx context.Context, clientJWT string, uris []string, auth *AuthHeaders) (*AuthHeaders, error) {
 	if clientJWT == "" {
 		return auth, nil
@@ -283,8 +304,8 @@ func (hf *httpFetcher) applyBrokerCredentials(ctx context.Context, clientJWT str
 		if err != nil {
 			continue
 		}
-		mapping, ok := hf.brokerMappings[parsed.Host]
-		if !ok {
+		mapping := hf.selectMapping(parsed)
+		if mapping == nil {
 			continue
 		}
 
@@ -307,7 +328,7 @@ func (hf *httpFetcher) applyBrokerCredentials(ctx context.Context, clientJWT str
 			auth = &a
 		}
 		auth.AddHeader(uri, headerName, headerPrefix+token)
-		log.Printf("Broker credential injected for host %s (destination %s)", parsed.Host, mapping.Destination)
+		log.Printf("Broker credential injected for host %s path_prefix=%q (destination %s)", parsed.Host, mapping.PathPrefix, mapping.Destination)
 	}
 
 	return auth, nil

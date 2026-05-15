@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -565,6 +566,242 @@ func TestHTTPFetcherBrokerCredentialInjection(t *testing.T) {
 		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
 
 		response, err := HTTPFetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+	})
+}
+
+func TestHTTPFetcherBrokerPathPrefixMatching(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	// Broker returns a destination-specific token so tests can
+	// verify which mapping was selected.
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/delegate":
+			fmt.Fprintf(w, `{"nonce":"nonce-abc"}`)
+		case "/token":
+			var req struct {
+				Destination string `json:"destination"`
+			}
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &req)
+			fmt.Fprintf(w, `{"token":"tok-%s","scheme":"bearer"}`, req.Destination)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer broker.Close()
+
+	instance := util.Must(digest.NewInstanceName(InstanceName))
+	digestFunction, err := instance.GetDigestFunction(remoteexecution.DigestFunction_SHA256, 0)
+	require.NoError(t, err)
+	digestGenerator := digestFunction.NewGenerator(int64(len(TestData)))
+	digestGenerator.Write([]byte(TestData))
+	helloDigest := digestGenerator.Sum()
+
+	casBlobAccess := mock.NewMockBlobAccess(ctrl)
+	roundTripper := mock.NewMockRoundTripper(ctrl)
+
+	t.Run("PathPrefixSelectsCorrectDestination", func(t *testing.T) {
+		fetcher := fetch.NewHTTPFetcher(
+			&http.Client{Transport: roundTripper},
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{Host: "raw.ghe.example.com", PathPrefix: "/Org-A", Destination: "dest-a"},
+				{Host: "raw.ghe.example.com", PathPrefix: "/Org-B", Destination: "dest-b"},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{"https://raw.ghe.example.com/Org-A/repo/main/file.txt"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		roundTripper.EXPECT().RoundTrip(&headerMatcher{
+			headers: map[string]string{"Authorization": "Bearer tok-dest-a"},
+		}).Return(&http.Response{
+			Status: "200 OK", StatusCode: 200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+	})
+
+	t.Run("PathPrefixNoMatch", func(t *testing.T) {
+		fetcher := fetch.NewHTTPFetcher(
+			&http.Client{Transport: roundTripper},
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{Host: "raw.ghe.example.com", PathPrefix: "/Org-A", Destination: "dest-a"},
+				{Host: "raw.ghe.example.com", PathPrefix: "/Org-B", Destination: "dest-b"},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{"https://raw.ghe.example.com/Other-Org/repo/main/file.txt"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		// No broker injection — no Authorization header on the request.
+		roundTripper.EXPECT().RoundTrip(gomock.Any()).Return(&http.Response{
+			Status: "200 OK", StatusCode: 200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+	})
+
+	t.Run("LongestPrefixWins", func(t *testing.T) {
+		fetcher := fetch.NewHTTPFetcher(
+			&http.Client{Transport: roundTripper},
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{Host: "raw.ghe.example.com", PathPrefix: "/Org", Destination: "dest-short"},
+				{Host: "raw.ghe.example.com", PathPrefix: "/Org/specific", Destination: "dest-long"},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{"https://raw.ghe.example.com/Org/specific/repo/file.txt"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		roundTripper.EXPECT().RoundTrip(&headerMatcher{
+			headers: map[string]string{"Authorization": "Bearer tok-dest-long"},
+		}).Return(&http.Response{
+			Status: "200 OK", StatusCode: 200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+	})
+
+	t.Run("EmptyPrefixWildcard", func(t *testing.T) {
+		fetcher := fetch.NewHTTPFetcher(
+			&http.Client{Transport: roundTripper},
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{Host: "raw.ghe.example.com", PathPrefix: "/Org-A", Destination: "dest-a"},
+				{Host: "raw.ghe.example.com", Destination: "dest-wildcard"},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{"https://raw.ghe.example.com/Other-Org/repo/main/file.txt"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		roundTripper.EXPECT().RoundTrip(&headerMatcher{
+			headers: map[string]string{"Authorization": "Bearer tok-dest-wildcard"},
+		}).Return(&http.Response{
+			Status: "200 OK", StatusCode: 200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+	})
+
+	t.Run("PathNormalization", func(t *testing.T) {
+		fetcher := fetch.NewHTTPFetcher(
+			&http.Client{Transport: roundTripper},
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{Host: "raw.ghe.example.com", PathPrefix: "/Org", Destination: "dest-org"},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		// Double slashes and dot segments should be normalized.
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{"https://raw.ghe.example.com//Org//repo/./file.txt"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		roundTripper.EXPECT().RoundTrip(&headerMatcher{
+			headers: map[string]string{"Authorization": "Bearer tok-dest-org"},
+		}).Return(&http.Response{
+			Status: "200 OK", StatusCode: 200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+	})
+
+	t.Run("HostOnlyBackCompat", func(t *testing.T) {
+		// Mapping without PathPrefix (empty string) matches any path.
+		fetcher := fetch.NewHTTPFetcher(
+			&http.Client{Transport: roundTripper},
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{Host: "artifactory.example.com", Destination: "artifactory"},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{"https://artifactory.example.com/api/pypi/simple/grpcio/"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+
+		roundTripper.EXPECT().RoundTrip(&headerMatcher{
+			headers: map[string]string{"Authorization": "Bearer tok-artifactory"},
+		}).Return(&http.Response{
+			Status: "200 OK", StatusCode: 200,
+			Body:          io.NopCloser(bytes.NewBuffer([]byte(TestData))),
+			ContentLength: int64(len(TestData)),
+		}, nil)
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
 		require.NoError(t, err)
 		require.Equal(t, int32(codes.OK), response.Status.Code)
 	})

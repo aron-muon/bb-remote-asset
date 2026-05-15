@@ -73,6 +73,15 @@ message FetcherConfiguration {
 
     // Value prefix prepended to the token. Default: "Bearer ".
     string header_prefix = 4;
+
+    // Optional URL path prefix to scope this mapping (e.g.
+    // "/Muon-Space"). When non-empty, only request URLs whose host
+    // matches AND whose cleaned path starts with this prefix select
+    // this mapping. Multiple mappings may share the same host with
+    // different path_prefix values; the longest matching prefix wins.
+    // Empty path_prefix matches all paths on the host (back-compat
+    // with host-only mappings).
+    string path_prefix = 5;
   }
 
   message RemoteExecutionFetcherConfiguration {

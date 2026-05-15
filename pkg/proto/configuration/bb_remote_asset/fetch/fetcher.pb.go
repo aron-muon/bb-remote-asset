@@ -188,6 +188,7 @@ type FetcherConfiguration_BrokerCredentialMapping struct {
 	Destination   string                 `protobuf:"bytes,2,opt,name=destination,proto3" json:"destination,omitempty"`
 	HeaderName    string                 `protobuf:"bytes,3,opt,name=header_name,json=headerName,proto3" json:"header_name,omitempty"`
 	HeaderPrefix  string                 `protobuf:"bytes,4,opt,name=header_prefix,json=headerPrefix,proto3" json:"header_prefix,omitempty"`
+	PathPrefix    string                 `protobuf:"bytes,5,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -250,6 +251,13 @@ func (x *FetcherConfiguration_BrokerCredentialMapping) GetHeaderPrefix() string 
 	return ""
 }
 
+func (x *FetcherConfiguration_BrokerCredentialMapping) GetPathPrefix() string {
+	if x != nil {
+		return x.PathPrefix
+	}
+	return ""
+}
+
 type FetcherConfiguration_RemoteExecutionFetcherConfiguration struct {
 	state           protoimpl.MessageState    `protogen:"open.v1"`
 	ExecutionClient *grpc.ClientConfiguration `protobuf:"bytes,2,opt,name=execution_client,json=executionClient,proto3" json:"execution_client,omitempty"`
@@ -298,7 +306,7 @@ var File_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_
 
 const file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remote_asset_fetch_fetcher_proto_rawDesc = "" +
 	"\n" +
-	"`github.com/buildbarn/bb-remote-asset/pkg/proto/configuration/bb_remote_asset/fetch/fetcher.proto\x12-buildbarn.configuration.bb_remote_asset.fetch\x1a\x17google/rpc/status.proto\x1aGgithub.com/buildbarn/bb-storage/pkg/proto/configuration/grpc/grpc.proto\x1aPgithub.com/buildbarn/bb-storage/pkg/proto/configuration/http/client/client.proto\"\xac\a\n" +
+	"`github.com/buildbarn/bb-remote-asset/pkg/proto/configuration/bb_remote_asset/fetch/fetcher.proto\x12-buildbarn.configuration.bb_remote_asset.fetch\x1a\x17google/rpc/status.proto\x1aGgithub.com/buildbarn/bb-storage/pkg/proto/configuration/grpc/grpc.proto\x1aPgithub.com/buildbarn/bb-storage/pkg/proto/configuration/http/client/client.proto\"\xcd\a\n" +
 	"\x14FetcherConfiguration\x12r\n" +
 	"\x04http\x18\x02 \x01(\v2\\.buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.HttpFetcherConfigurationH\x00R\x04http\x12*\n" +
 	"\x05error\x18\x03 \x01(\v2\x12.google.rpc.StatusH\x00R\x05error\x12\x94\x01\n" +
@@ -307,13 +315,15 @@ const file_github_com_buildbarn_bb_remote_asset_pkg_proto_configuration_bb_remot
 	"\x06client\x18\x03 \x01(\v22.buildbarn.configuration.http.client.ConfigurationR\x06client\x12\x1d\n" +
 	"\n" +
 	"broker_url\x18\x04 \x01(\tR\tbrokerUrl\x12\x99\x01\n" +
-	"\x1abroker_credential_mappings\x18\x05 \x03(\v2[.buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.BrokerCredentialMappingR\x18brokerCredentialMappingsJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03\x1a\x95\x01\n" +
+	"\x1abroker_credential_mappings\x18\x05 \x03(\v2[.buildbarn.configuration.bb_remote_asset.fetch.FetcherConfiguration.BrokerCredentialMappingR\x18brokerCredentialMappingsJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03\x1a\xb6\x01\n" +
 	"\x17BrokerCredentialMapping\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12 \n" +
 	"\vdestination\x18\x02 \x01(\tR\vdestination\x12\x1f\n" +
 	"\vheader_name\x18\x03 \x01(\tR\n" +
 	"headerName\x12#\n" +
-	"\rheader_prefix\x18\x04 \x01(\tR\fheaderPrefix\x1a\x83\x01\n" +
+	"\rheader_prefix\x18\x04 \x01(\tR\fheaderPrefix\x12\x1f\n" +
+	"\vpath_prefix\x18\x05 \x01(\tR\n" +
+	"pathPrefix\x1a\x83\x01\n" +
 	"#RemoteExecutionFetcherConfiguration\x12\\\n" +
 	"\x10execution_client\x18\x02 \x01(\v21.buildbarn.configuration.grpc.ClientConfigurationR\x0fexecutionClientB\t\n" +
 	"\abackendJ\x04\b\x01\x10\x02BTZRgithub.com/buildbarn/bb-remote-asset/pkg/proto/configuration/bb_remote_asset/fetchb\x06proto3"
