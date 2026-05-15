@@ -306,6 +306,7 @@ func (hf *httpFetcher) applyBrokerCredentials(ctx context.Context, clientJWT str
 		}
 		mapping := hf.selectMapping(parsed)
 		if mapping == nil {
+			log.Printf("No broker mapping for %s%s", parsed.Host, parsed.Path)
 			continue
 		}
 
