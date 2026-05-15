@@ -807,6 +807,200 @@ func TestHTTPFetcherBrokerPathPrefixMatching(t *testing.T) {
 	})
 }
 
+func TestHTTPFetcherBrokerPathPrefixGHEScenario(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	// Broker returns a destination-specific token. The /delegate
+	// and /token exchanges mirror the real broker protocol.
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/delegate":
+			fmt.Fprintf(w, `{"nonce":"nonce-ghe"}`)
+		case "/token":
+			var req struct {
+				Destination string `json:"destination"`
+			}
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &req)
+			fmt.Fprintf(w, `{"token":"ghtoken-%s","scheme":"bearer"}`, req.Destination)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer broker.Close()
+
+	instance := util.Must(digest.NewInstanceName(InstanceName))
+	digestFunction, err := instance.GetDigestFunction(remoteexecution.DigestFunction_SHA256, 0)
+	require.NoError(t, err)
+	digestGenerator := digestFunction.NewGenerator(int64(len(TestData)))
+	digestGenerator.Write([]byte(TestData))
+	helloDigest := digestGenerator.Sum()
+
+	casBlobAccess := mock.NewMockBlobAccess(ctrl)
+
+	// Capture the actual HTTP request to verify headers.
+	var capturedReq *http.Request
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedReq = r
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(TestData)))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(TestData))
+	}))
+	defer upstream.Close()
+
+	t.Run("GHEPathPrefixInjectsCredential", func(t *testing.T) {
+		// Two orgs on the same GHE host with different broker
+		// destinations — the exact production scenario.
+		fetcher := fetch.NewHTTPFetcher(
+			upstream.Client(),
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{
+					Host:        upstream.Listener.Addr().String(),
+					PathPrefix:  "/Muon-Space",
+					Destination: "ghe-app-muon-space",
+				},
+				{
+					Host:        upstream.Listener.Addr().String(),
+					PathPrefix:  "/Muon-Space-Gov",
+					Destination: "ghe-app-muon-space-gov",
+				},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-build-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		capturedReq = nil
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{upstream.URL + "/Muon-Space/bazel-module-registry/refs/heads/main/modules/nanopb/source.json"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.NotNil(t, capturedReq, "upstream should have received an HTTP request")
+		require.Equal(t, "Bearer ghtoken-ghe-app-muon-space", capturedReq.Header.Get("Authorization"),
+			"broker should inject the Muon-Space org token")
+	})
+
+	t.Run("GHEPathPrefixGovOrg", func(t *testing.T) {
+		fetcher := fetch.NewHTTPFetcher(
+			upstream.Client(),
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{
+					Host:        upstream.Listener.Addr().String(),
+					PathPrefix:  "/Muon-Space",
+					Destination: "ghe-app-muon-space",
+				},
+				{
+					Host:        upstream.Listener.Addr().String(),
+					PathPrefix:  "/Muon-Space-Gov",
+					Destination: "ghe-app-muon-space-gov",
+				},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-build-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		capturedReq = nil
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{upstream.URL + "/Muon-Space-Gov/infra/refs/heads/main/config.yaml"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.NotNil(t, capturedReq)
+		require.Equal(t, "Bearer ghtoken-ghe-app-muon-space-gov", capturedReq.Header.Get("Authorization"),
+			"broker should inject the Muon-Space-Gov org token")
+	})
+
+	t.Run("GHENoMappingNoAuth", func(t *testing.T) {
+		// URL for an org that has NO mapping — no credential injection.
+		fetcher := fetch.NewHTTPFetcher(
+			upstream.Client(),
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{
+					Host:        upstream.Listener.Addr().String(),
+					PathPrefix:  "/Muon-Space",
+					Destination: "ghe-app-muon-space",
+				},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-build-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		capturedReq = nil
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{upstream.URL + "/Other-Org/repo/refs/heads/main/BUILD.bazel"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.NotNil(t, capturedReq)
+		require.Empty(t, capturedReq.Header.Get("Authorization"),
+			"no mapping for /Other-Org — request should have no auth header")
+	})
+
+	t.Run("GHEPrefixDoesNotMatchSimilarOrg", func(t *testing.T) {
+		// /Muon-Space-Gov must NOT match a /Muon-Space prefix.
+		// Longest-prefix logic: /Muon-Space is a prefix of
+		// /Muon-Space-Gov as a string, so if only /Muon-Space is
+		// configured, it WILL match /Muon-Space-Gov. This is
+		// documented behavior — operators who need to prevent this
+		// must add /Muon-Space/ (trailing slash) or add a more
+		// specific mapping. This test documents the current semantics.
+		fetcher := fetch.NewHTTPFetcher(
+			upstream.Client(),
+			casBlobAccess,
+			broker.URL,
+			[]*pb.FetcherConfiguration_BrokerCredentialMapping{
+				{
+					Host:        upstream.Listener.Addr().String(),
+					PathPrefix:  "/Muon-Space",
+					Destination: "ghe-app-muon-space",
+				},
+			},
+		)
+
+		md := metadata.Pairs("authorization", "Bearer client-build-jwt")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		capturedReq = nil
+		request := &remoteasset.FetchBlobRequest{
+			InstanceName:   InstanceName,
+			Uris:           []string{upstream.URL + "/Muon-Space-Gov/repo/file.txt"},
+			DigestFunction: remoteexecution.DigestFunction_SHA256,
+		}
+		casBlobAccess.EXPECT().Put(ctx, helloDigest, gomock.Any()).Return(nil)
+
+		response, err := fetcher.FetchBlob(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.NotNil(t, capturedReq)
+		require.Equal(t, "Bearer ghtoken-ghe-app-muon-space", capturedReq.Header.Get("Authorization"),
+			"/Muon-Space prefix matches /Muon-Space-Gov — this is expected string prefix behavior")
+	})
+}
+
 func TestHTTPFetcherFetchDirectory(t *testing.T) {
 	ctrl, ctx := gomock.WithContext(context.Background(), t)
 
