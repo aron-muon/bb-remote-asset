@@ -232,9 +232,13 @@ func TestCachingFetcherOldestContentAccepted(t *testing.T) {
 //
 // The expected hex digest for the test below is precomputed from a
 // real checksum.sri value:
-//   sha256-GF+NsyJx/iX1Yab8k4suJkMG7DBO2lGAB9F2SCY4GWk=
+//
+//	sha256-GF+NsyJx/iX1Yab8k4suJkMG7DBO2lGAB9F2SCY4GWk=
+//
 // base64-decodes to bytes whose hex form is:
-//   185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969
+//
+//	185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969
+//
 // (this is SHA256("Hello") — useful for any future end-to-end tests
 // that want to round-trip through the http fetcher).
 func TestFetchBlobCachingChecksumSriValidation(t *testing.T) {
