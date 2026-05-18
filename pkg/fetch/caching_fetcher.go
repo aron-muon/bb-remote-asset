@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -55,6 +56,23 @@ func (cf *cachingFetcher) FetchBlob(ctx context.Context, req *remoteasset.FetchB
 		if err != nil {
 			allCachingErrors = append(allCachingErrors, err)
 			continue
+		}
+
+		// Soundness: if the client specified an expected hash via
+		// checksum.sri, a cached digest that doesn't match it is
+		// stale (most likely from an older bb-remote-asset version
+		// that didn't validate, or from a race). Treating it as a
+		// miss lets the wrapped fetcher do a fresh download and
+		// re-cache the correct content — the cache becomes
+		// self-healing.
+		if expected, _, sriErr := getChecksumSri(req.Qualifiers); sriErr == nil && expected != "" {
+			if assetData.Digest.GetHash() != expected {
+				log.Printf("Stale AC entry for %s: cached digest %s does not match expected %s from checksum.sri; refetching", uri, assetData.Digest.GetHash(), expected)
+				allCachingErrors = append(allCachingErrors, fmt.Errorf(
+					"cached digest %s for %s does not match expected %s from checksum.sri",
+					assetData.Digest.GetHash(), uri, expected))
+				continue
+			}
 		}
 
 		// Successful retrieval from the asset reference cache
@@ -168,6 +186,20 @@ func (cf *cachingFetcher) FetchDirectory(ctx context.Context, req *remoteasset.F
 		if err != nil {
 			allCachingErrors = append(allCachingErrors, err)
 			continue
+		}
+
+		// Mirror of the FetchBlob staleness check — see comment
+		// there. Directory fetches don't typically carry
+		// checksum.sri but keeping the two paths consistent
+		// prevents drift if that changes.
+		if expected, _, sriErr := getChecksumSri(req.Qualifiers); sriErr == nil && expected != "" {
+			if assetData.Digest.GetHash() != expected {
+				log.Printf("Stale AC entry for directory %s: cached digest %s does not match expected %s from checksum.sri; refetching", uri, assetData.Digest.GetHash(), expected)
+				allCachingErrors = append(allCachingErrors, fmt.Errorf(
+					"cached digest %s for directory %s does not match expected %s from checksum.sri",
+					assetData.Digest.GetHash(), uri, expected))
+				continue
+			}
 		}
 
 		// Successful retrieval from the asset reference cache

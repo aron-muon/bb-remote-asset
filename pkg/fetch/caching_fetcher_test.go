@@ -224,6 +224,317 @@ func TestCachingFetcherOldestContentAccepted(t *testing.T) {
 	require.Equal(t, errAsStatus.Code(), codes.NotFound)
 }
 
+// TestFetchBlobCachingChecksumSriValidation exercises the self-healing
+// behavior added to the cache-hit path: when a request supplies a
+// checksum.sri qualifier and the AC entry's cached digest does NOT
+// match the expected hash, the entry must be treated as a miss so the
+// wrapped fetcher re-downloads and re-stores the correct content.
+//
+// The expected hex digest for the test below is precomputed from a
+// real checksum.sri value:
+//   sha256-GF+NsyJx/iX1Yab8k4suJkMG7DBO2lGAB9F2SCY4GWk=
+// base64-decodes to bytes whose hex form is:
+//   185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969
+// (this is SHA256("Hello") — useful for any future end-to-end tests
+// that want to round-trip through the http fetcher).
+func TestFetchBlobCachingChecksumSriValidation(t *testing.T) {
+	const (
+		expectedHashHex = "185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969"
+		expectedSizeB   = 5
+		checksumSri     = "sha256-GF+NsyJx/iX1Yab8k4suJkMG7DBO2lGAB9F2SCY4GWk="
+		staleHashHex    = "7dadb03bc91583ce16597f30270a7d0f79e0f1227eb166b851447f946450d1bc"
+		staleSizeB      = 517363235
+	)
+
+	uri := "https://artifactory.example.com/LLVM-20.1.1-Linux-X64.tar.zst"
+	correctDigest := &remoteexecution.Digest{Hash: expectedHashHex, SizeBytes: expectedSizeB}
+	staleDigest := &remoteexecution.Digest{Hash: staleHashHex, SizeBytes: staleSizeB}
+
+	t.Run("CachedDigestMatchesChecksumSri_ReturnsCached", func(t *testing.T) {
+		ctrl, ctx := gomock.WithContext(context.Background(), t)
+
+		instanceName, err := bb_digest.NewInstanceName("")
+		require.NoError(t, err)
+		digestFunction, err := instanceName.GetDigestFunction(remoteexecution.DigestFunction_SHA256, 0)
+		require.NoError(t, err)
+
+		req := &remoteasset.FetchBlobRequest{
+			InstanceName: "",
+			Uris:         []string{uri},
+			Qualifiers: []*remoteasset.Qualifier{
+				{Name: "checksum.sri", Value: checksumSri},
+			},
+		}
+		_, refDigest, err := storage.ProtoSerialise(
+			storage.NewAssetReference([]string{uri}, req.Qualifiers),
+			digestFunction)
+		require.NoError(t, err)
+
+		backend := mock.NewMockBlobAccess(ctrl)
+		assetStore := storage.NewBlobAccessAssetStore(backend, 16*1024*1024)
+		mockFetcher := mock.NewMockFetcher(ctrl)
+		cachingFetcher := fetch.NewCachingFetcher(mockFetcher, assetStore)
+
+		// AC hit with a cached digest that matches checksum.sri.
+		// No wrapped-fetcher call should happen.
+		backend.EXPECT().Get(ctx, refDigest).Return(
+			buffer.NewProtoBufferFromProto(storage.NewBlobAsset(correctDigest, nil), buffer.UserProvided))
+
+		response, err := cachingFetcher.FetchBlob(ctx, req)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.True(t, proto.Equal(response.BlobDigest, correctDigest))
+	})
+
+	t.Run("CachedDigestMismatchesChecksumSri_FallsThroughAndReheals", func(t *testing.T) {
+		ctrl, ctx := gomock.WithContext(context.Background(), t)
+
+		instanceName, err := bb_digest.NewInstanceName("")
+		require.NoError(t, err)
+		digestFunction, err := instanceName.GetDigestFunction(remoteexecution.DigestFunction_SHA256, 0)
+		require.NoError(t, err)
+
+		req := &remoteasset.FetchBlobRequest{
+			InstanceName: "",
+			Uris:         []string{uri},
+			Qualifiers: []*remoteasset.Qualifier{
+				{Name: "checksum.sri", Value: checksumSri},
+			},
+		}
+		_, refDigest, err := storage.ProtoSerialise(
+			storage.NewAssetReference([]string{uri}, req.Qualifiers),
+			digestFunction)
+		require.NoError(t, err)
+
+		backend := mock.NewMockBlobAccess(ctrl)
+		assetStore := storage.NewBlobAccessAssetStore(backend, 16*1024*1024)
+		mockFetcher := mock.NewMockFetcher(ctrl)
+		cachingFetcher := fetch.NewCachingFetcher(mockFetcher, assetStore)
+
+		// AC hit returns a stale (poisoned) digest.
+		staleGetCall := backend.EXPECT().Get(ctx, refDigest).Return(
+			buffer.NewProtoBufferFromProto(storage.NewBlobAsset(staleDigest, nil), buffer.UserProvided))
+
+		// Wrapped fetcher MUST be invoked with the same request — the
+		// staleness check should cause the cache-hit path to fall through.
+		freshFetchCall := mockFetcher.EXPECT().FetchBlob(ctx, req).Return(&remoteasset.FetchBlobResponse{
+			Status:     status.New(codes.OK, "Success!").Proto(),
+			Uri:        uri,
+			BlobDigest: correctDigest,
+			Qualifiers: req.Qualifiers,
+		}, nil).After(staleGetCall)
+
+		// The fresh response MUST be re-stored under the same AC key,
+		// overwriting the poisoned entry. This is the self-healing step.
+		backend.EXPECT().Put(ctx, refDigest, gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ bb_digest.Digest, b buffer.Buffer) error {
+				m, err := b.ToProto(&asset.Asset{}, 1000)
+				require.NoError(t, err)
+				a := m.(*asset.Asset)
+				require.True(t, proto.Equal(a.Digest, correctDigest),
+					"re-stored entry should contain the correct (fresh) digest")
+				return nil
+			}).After(freshFetchCall)
+
+		response, err := cachingFetcher.FetchBlob(ctx, req)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.True(t, proto.Equal(response.BlobDigest, correctDigest),
+			"client must receive the corrected digest, not the stale one")
+	})
+
+	t.Run("NoChecksumSri_CachedDigestReturnedAsIs", func(t *testing.T) {
+		// Back-compat: requests without checksum.sri continue to
+		// trust the cached digest. This covers older Bazel clients
+		// and repository rules that don't pass a sha256.
+		ctrl, ctx := gomock.WithContext(context.Background(), t)
+
+		instanceName, err := bb_digest.NewInstanceName("")
+		require.NoError(t, err)
+		digestFunction, err := instanceName.GetDigestFunction(remoteexecution.DigestFunction_SHA256, 0)
+		require.NoError(t, err)
+
+		req := &remoteasset.FetchBlobRequest{
+			InstanceName: "",
+			Uris:         []string{uri},
+		}
+		_, refDigest, err := storage.ProtoSerialise(
+			storage.NewAssetReference([]string{uri}, []*remoteasset.Qualifier{}),
+			digestFunction)
+		require.NoError(t, err)
+
+		backend := mock.NewMockBlobAccess(ctrl)
+		assetStore := storage.NewBlobAccessAssetStore(backend, 16*1024*1024)
+		mockFetcher := mock.NewMockFetcher(ctrl)
+		cachingFetcher := fetch.NewCachingFetcher(mockFetcher, assetStore)
+
+		// AC hit with what happens to be the "stale" digest from the
+		// scenario above. Without checksum.sri, we have no basis to
+		// reject it and must trust the cache.
+		backend.EXPECT().Get(ctx, refDigest).Return(
+			buffer.NewProtoBufferFromProto(storage.NewBlobAsset(staleDigest, nil), buffer.UserProvided))
+
+		response, err := cachingFetcher.FetchBlob(ctx, req)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.True(t, proto.Equal(response.BlobDigest, staleDigest))
+	})
+
+	t.Run("StaleThenFresh_SubsequentRequestHitsRehealedEntry", func(t *testing.T) {
+		// End-to-end self-healing: first request finds stale → falls
+		// through → re-stores correct. Second request with same
+		// checksum.sri hits the cache and gets the correct digest
+		// without a wrapped-fetcher call (proves the rewrite stuck).
+		ctrl, ctx := gomock.WithContext(context.Background(), t)
+
+		instanceName, err := bb_digest.NewInstanceName("")
+		require.NoError(t, err)
+		digestFunction, err := instanceName.GetDigestFunction(remoteexecution.DigestFunction_SHA256, 0)
+		require.NoError(t, err)
+
+		req := &remoteasset.FetchBlobRequest{
+			InstanceName: "",
+			Uris:         []string{uri},
+			Qualifiers: []*remoteasset.Qualifier{
+				{Name: "checksum.sri", Value: checksumSri},
+			},
+		}
+		_, refDigest, err := storage.ProtoSerialise(
+			storage.NewAssetReference([]string{uri}, req.Qualifiers),
+			digestFunction)
+		require.NoError(t, err)
+
+		backend := mock.NewMockBlobAccess(ctrl)
+		assetStore := storage.NewBlobAccessAssetStore(backend, 16*1024*1024)
+		mockFetcher := mock.NewMockFetcher(ctrl)
+		cachingFetcher := fetch.NewCachingFetcher(mockFetcher, assetStore)
+
+		// 1st request: AC has the stale entry → mismatch → fall through.
+		staleGet := backend.EXPECT().Get(ctx, refDigest).Return(
+			buffer.NewProtoBufferFromProto(storage.NewBlobAsset(staleDigest, nil), buffer.UserProvided))
+		freshFetch := mockFetcher.EXPECT().FetchBlob(ctx, req).Return(&remoteasset.FetchBlobResponse{
+			Status:     status.New(codes.OK, "Success!").Proto(),
+			Uri:        uri,
+			BlobDigest: correctDigest,
+			Qualifiers: req.Qualifiers,
+		}, nil).After(staleGet)
+		reStorePut := backend.EXPECT().Put(ctx, refDigest, gomock.Any()).Return(nil).After(freshFetch)
+
+		// 2nd request: AC now returns the correct entry → match → no
+		// wrapped-fetcher call. This is the proof that healing stuck.
+		backend.EXPECT().Get(ctx, refDigest).Return(
+			buffer.NewProtoBufferFromProto(storage.NewBlobAsset(correctDigest, nil), buffer.UserProvided),
+		).After(reStorePut)
+
+		resp1, err := cachingFetcher.FetchBlob(ctx, req)
+		require.NoError(t, err)
+		require.True(t, proto.Equal(resp1.BlobDigest, correctDigest))
+
+		resp2, err := cachingFetcher.FetchBlob(ctx, req)
+		require.NoError(t, err)
+		require.True(t, proto.Equal(resp2.BlobDigest, correctDigest))
+	})
+}
+
+// TestFetchDirectoryCachingChecksumSriValidation mirrors the FetchBlob
+// validation for FetchDirectory. Directory fetches don't typically carry
+// checksum.sri today but keeping the two paths consistent prevents
+// drift.
+func TestFetchDirectoryCachingChecksumSriValidation(t *testing.T) {
+	const (
+		expectedHashHex = "185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969"
+		checksumSri     = "sha256-GF+NsyJx/iX1Yab8k4suJkMG7DBO2lGAB9F2SCY4GWk="
+		staleHashHex    = "7dadb03bc91583ce16597f30270a7d0f79e0f1227eb166b851447f946450d1bc"
+	)
+
+	uri := "https://example.com/release-tree.tar.gz"
+	correctDigest := &remoteexecution.Digest{Hash: expectedHashHex, SizeBytes: 5}
+	staleDigest := &remoteexecution.Digest{Hash: staleHashHex, SizeBytes: 999}
+
+	t.Run("CachedDigestMismatchesChecksumSri_FallsThroughAndReheals", func(t *testing.T) {
+		ctrl, ctx := gomock.WithContext(context.Background(), t)
+
+		instanceName, err := bb_digest.NewInstanceName("")
+		require.NoError(t, err)
+		digestFunction, err := instanceName.GetDigestFunction(remoteexecution.DigestFunction_SHA256, 0)
+		require.NoError(t, err)
+
+		req := &remoteasset.FetchDirectoryRequest{
+			InstanceName: "",
+			Uris:         []string{uri},
+			Qualifiers: []*remoteasset.Qualifier{
+				{Name: "checksum.sri", Value: checksumSri},
+			},
+		}
+		_, refDigest, err := storage.ProtoSerialise(
+			storage.NewAssetReference([]string{uri}, req.Qualifiers),
+			digestFunction)
+		require.NoError(t, err)
+
+		backend := mock.NewMockBlobAccess(ctrl)
+		assetStore := storage.NewBlobAccessAssetStore(backend, 16*1024*1024)
+		mockFetcher := mock.NewMockFetcher(ctrl)
+		cachingFetcher := fetch.NewCachingFetcher(mockFetcher, assetStore)
+
+		staleGet := backend.EXPECT().Get(ctx, refDigest).Return(
+			buffer.NewProtoBufferFromProto(storage.NewDirectoryAsset(staleDigest, nil), buffer.UserProvided))
+		freshFetch := mockFetcher.EXPECT().FetchDirectory(ctx, req).Return(&remoteasset.FetchDirectoryResponse{
+			Status:              status.New(codes.OK, "Success!").Proto(),
+			Uri:                 uri,
+			RootDirectoryDigest: correctDigest,
+			Qualifiers:          req.Qualifiers,
+		}, nil).After(staleGet)
+		backend.EXPECT().Put(ctx, refDigest, gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ bb_digest.Digest, b buffer.Buffer) error {
+				m, err := b.ToProto(&asset.Asset{}, 1000)
+				require.NoError(t, err)
+				a := m.(*asset.Asset)
+				require.True(t, proto.Equal(a.Digest, correctDigest))
+				require.Equal(t, asset.Asset_DIRECTORY, a.Type)
+				return nil
+			}).After(freshFetch)
+
+		response, err := cachingFetcher.FetchDirectory(ctx, req)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.True(t, proto.Equal(response.RootDirectoryDigest, correctDigest))
+	})
+
+	t.Run("CachedDigestMatchesChecksumSri_ReturnsCached", func(t *testing.T) {
+		ctrl, ctx := gomock.WithContext(context.Background(), t)
+
+		instanceName, err := bb_digest.NewInstanceName("")
+		require.NoError(t, err)
+		digestFunction, err := instanceName.GetDigestFunction(remoteexecution.DigestFunction_SHA256, 0)
+		require.NoError(t, err)
+
+		req := &remoteasset.FetchDirectoryRequest{
+			InstanceName: "",
+			Uris:         []string{uri},
+			Qualifiers: []*remoteasset.Qualifier{
+				{Name: "checksum.sri", Value: checksumSri},
+			},
+		}
+		_, refDigest, err := storage.ProtoSerialise(
+			storage.NewAssetReference([]string{uri}, req.Qualifiers),
+			digestFunction)
+		require.NoError(t, err)
+
+		backend := mock.NewMockBlobAccess(ctrl)
+		assetStore := storage.NewBlobAccessAssetStore(backend, 16*1024*1024)
+		mockFetcher := mock.NewMockFetcher(ctrl)
+		cachingFetcher := fetch.NewCachingFetcher(mockFetcher, assetStore)
+
+		backend.EXPECT().Get(ctx, refDigest).Return(
+			buffer.NewProtoBufferFromProto(storage.NewDirectoryAsset(correctDigest, nil), buffer.UserProvided))
+
+		response, err := cachingFetcher.FetchDirectory(ctx, req)
+		require.NoError(t, err)
+		require.Equal(t, int32(codes.OK), response.Status.Code)
+		require.True(t, proto.Equal(response.RootDirectoryDigest, correctDigest))
+	})
+}
+
 func TestFetchBlobVolatileQualifiersIgnored(t *testing.T) {
 	ctrl, ctx := gomock.WithContext(context.Background(), t)
 
